@@ -1,0 +1,58 @@
+package com.wearly.app;
+
+import android.app.Activity;
+import android.content.Intent;
+import android.graphics.Color;
+import android.net.Uri;
+import android.os.Bundle;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+
+public class MainActivity extends Activity {
+    private WebView web;
+    private ValueCallback<Uri[]> chooser;
+
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        getWindow().setStatusBarColor(Color.parseColor("#0a0e1a"));
+        web = new WebView(this);
+        setContentView(web);
+        WebSettings s = web.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setAllowFileAccess(true);
+        web.setWebViewClient(new WebViewClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
+                if (chooser != null) chooser.onReceiveValue(null);
+                chooser = cb;
+                Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("image/*");
+                startActivityForResult(Intent.createChooser(i, "Photo"), 1);
+                return true;
+            }
+        });
+        web.loadUrl("file:///android_asset/index.html");
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        if (req == 1 && chooser != null) {
+            Uri[] u = null;
+            if (res == RESULT_OK && data != null && data.getData() != null) u = new Uri[]{data.getData()};
+            chooser.onReceiveValue(u);
+            chooser = null;
+        } else super.onActivityResult(req, res, data);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (web.canGoBack()) web.goBack(); else super.onBackPressed();
+    }
+}
