@@ -1,0 +1,43 @@
+// Test de bout en bout : node test.js
+process.env.DATA_DIR = require('fs').mkdtempSync(require('os').tmpdir() + '/w-');
+const { server } = require('./index'), assert = require('assert');
+server.listen(0, async () => {
+  const B = 'http://localhost:' + server.address().port;
+  const api = async (m, p, b, t) => { const r = await fetch(B + p, { method: m, headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: 'Bearer ' + t } : {}) }, body: b ? JSON.stringify(b) : undefined }); return { s: r.status, d: await r.json() }; };
+  let r = await api('POST', '/api/register', { name: 'Aymen', email: 'a@x.com', password: 'secret1' }); assert.equal(r.s, 201); const A = r.d, ta = A.token;
+  r = await api('POST', '/api/register', { name: 'Fatou', email: 'f@x.com', password: 'secret2' }); const F = r.d;
+  assert.equal((await api('POST', '/api/register', { name: 'x', email: 'a@x.com', password: 'secret1' })).s, 409);
+  assert.equal((await api('POST', '/api/login', { email: 'a@x.com', password: 'bad' })).s, 401);
+  r = await api('POST', '/api/login', { email: 'A@x.com', password: 'secret1' }); assert.equal(r.s, 200);
+  assert.equal((await api('GET', '/api/health')).s, 200); assert.equal((await api('GET', '/api/me')).s, 401); assert.equal((await api('GET', '/api/me', null, ta)).d.user.name, 'Aymen');
+  assert.equal((await api('PUT', '/api/sync/profile', { data: { a: 1 }, at: 100 }, ta)).s, 200);
+  assert.equal((await api('PUT', '/api/sync/profile', { data: { a: 0 }, at: 50 }, ta)).s, 409);
+  assert.equal((await api('GET', '/api/sync', null, ta)).d.docs.profile.data.a, 1);
+  assert.equal((await api('GET', '/api/users?q=fat', null, ta)).d.users[0].id, F.user.id);
+  // temps reel : Fatou ecoute, Aymen ecrit
+  const ev = []; const ctl = new AbortController();
+  fetch(B + '/api/events?token=' + F.token, { signal: ctl.signal }).then(async res => { const rd = res.body.getReader(); for (;;) { const { value, done } = await rd.read(); if (done) break; ev.push(Buffer.from(value).toString()); } }).catch(() => { });
+  await new Promise(x => setTimeout(x, 300));
+  r = await api('POST', '/api/messages', { id: 'm1', to: F.user.id, text: 'Salaam Fatou' }, ta); assert.equal(r.d.st, 'delivered');
+  await new Promise(x => setTimeout(x, 200)); assert.ok(ev.join('').includes('Salaam Fatou'), 'message recu en direct');
+  assert.equal((await api('POST', '/api/messages', { id: 'm1', to: F.user.id, text: 'Salaam Fatou' }, ta)).d.id, 'm1');
+  assert.equal((await api('POST', '/api/messages/read', { from: A.user.id }, F.token)).d.n, 1);
+  r = await api('GET', '/api/messages?since=0', null, ta); assert.equal(r.d.messages.length, 1); assert.equal(r.d.messages[0].st, 'read');
+  r = await api('GET', '/api/messages?since=' + Date.now(), null, ta); assert.equal(r.d.messages.length, 0);
+  // --- IA, apprentissage, boutiques ---
+  assert.equal((await api('POST', '/api/ai/clothing', { image: 'AAAA', mime: 'image/jpeg' }, ta)).s, 503, 'IA non configuree');
+  process.env.ANTHROPIC_API_KEY = 'test'; const orig = global.fetch;
+  global.fetch = (u, o) => String(u).includes('anthropic.com') ? Promise.resolve({ ok: true, json: async () => ({ content: [{ text: 'Voici: {"name":"T-shirt rouge","category":"T-shirts","color":"rouge","style":"casual","material":"coton","season":"Été","occasions":["casual","party","zzz"],"confidence":0.9}' + ' Voilà {fin}' }] }) }) : orig(u, o);
+  r = await api('POST', '/api/ai/clothing', { image: 'data:image/jpeg;base64,AAAA', mime: 'image/jpeg' }, ta);
+  assert.equal(r.s, 200, JSON.stringify(r.d)); assert.equal(r.d.result.category, 'T-shirts'); assert.deepEqual(r.d.result.occasions, ['casual', 'party']);
+  assert.equal((await api('POST', '/api/ai/clothing', { image: 'AAAA', mime: 'text/html' }, ta)).s, 400); global.fetch = orig;
+  assert.equal((await api('POST', '/api/track', { events: [] }, ta)).s, 403);
+  process.env.TRENDS_K = '1';
+  assert.equal((await api('POST', '/api/track', { consent: true, events: [{ t: 'wardrobe_add', p: { color: 'bleu', category: 'Polos', secret: 'x' } }, { t: 'screen', p: { screen: 'home' } }] }, ta)).d.n, 2);
+  r = await api('GET', '/api/trends?country=SN', null, ta); assert.equal(r.d.trends.color[0].v, 'bleu'); assert.ok(!JSON.stringify(r.d).includes(A.user.id), 'tendances anonymes');
+  process.env.TRENDS_K = '3'; assert.equal((await api('GET', '/api/trends?country=SN', null, ta)).d.trends.color.length, 0, 'seuil k respecte');
+  assert.equal((await api('DELETE', '/api/track', null, ta)).s, 200);
+  assert.equal((await api('PUT', '/api/stores/mine', { store: { name: 'Boutique Test', city: 'Dakar', cc: 'SN', lat: 14.69, lon: -17.44, o: 9, c: 20 }, products: [{ id: 'p1', n: 'Chemise', price: 30, stock: 5, promo: 10 }, { n: '' }] }, ta)).d.n, 1);
+  r = await api('GET', '/api/stores?country=SN', null, F.token); assert.equal(r.d.stores[0].products[0].promo, 10);
+  ctl.abort(); console.log('TOUS LES TESTS SERVEUR OK'); process.exit(0);
+});
