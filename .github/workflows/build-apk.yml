@@ -13,24 +13,50 @@ jobs:
       RUN_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: 
+          node-version: 20
+          cache: 'npm'
+          
       - uses: actions/setup-java@v5
-        with: { distribution: temurin, java-version: 17 }
-      - run: node scripts/build-www.js
-      - run: npm install
-      - run: npx cap add android
-      - name: Cle de signature
+        with: 
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build web assets
+        run: node scripts/build-www.js
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Clé de signature
         if: ${{ env.KS_PASS != '' }}
         run: echo "${{ secrets.KS_BASE64 }}" | base64 -d > android/app/release.jks
-      - run: python3 scripts/patch_android.py
-      - run: npx cap sync android
-      - name: APK signe + AAB (Play Store)
+
+      - name: Patch Android configuration
+        run: python3 scripts/patch_android.py
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build Release (APK + AAB)
         if: ${{ env.KS_PASS != '' }}
-        run: cd android && chmod +x gradlew && ./gradlew assembleRelease bundleRelease --no-daemon
-      - name: APK de test (sans signature)
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease bundleRelease --no-daemon
+
+      - name: Build Debug (Test APK)
         if: ${{ env.KS_PASS == '' }}
-        run: cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
       - uses: actions/upload-artifact@v4
         with:
           name: WEARLY
